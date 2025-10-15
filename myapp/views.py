@@ -1,7 +1,11 @@
+import re
+import torch
+import os
 from django.shortcuts import render, redirect
 from .models import AppUser
 from django.contrib.auth.hashers import make_password
 from django.core.mail import send_mail
+from transformers import BertForSequenceClassification, BertTokenizer
 
 def welcome(request):
     """
@@ -385,3 +389,80 @@ def historia_clinica(request):
 
 #esto es un comentario para ver si solo se permite un solo despliegue 
 #y este es otro
+
+
+# --- 1. CONFIGURACIÓN Y CARGA DEL MODELO (se ejecuta solo una vez) ---
+# Define la ruta a la carpeta del modelo.
+# **Asegúrate de que esta ruta sea correcta y que la carpeta del modelo esté allí.**
+DIRECTORIO_MODELO = '/modelos/Modelos Entrenados/modelo_cancer_clinicalbert'
+MAX_LEN = 256
+
+print("--- Cargando modelo y tokenizador para la web... ---")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+# Variable global para almacenar el modelo y tokenizador cargados.
+modelo_cargado = None
+tokenizer_cargado = None
+
+try:
+    if not os.path.exists(DIRECTORIO_MODELO):
+        print(f"ERROR: La carpeta del modelo '{DIRECTORIO_MODELO}' no se encontró. Asegúrate de haberla descargado.")
+    else:
+        # Carga el modelo y el tokenizador una sola vez.
+        modelo_cargado = BertForSequenceClassification.from_pretrained(DIRECTORIO_MODELO)
+        modelo_cargado.to(device)
+        tokenizer_cargado = BertTokenizer.from_pretrained(DIRECTORIO_MODELO)
+        print(f"Modelo y tokenizador cargados exitosamente para la vista web.")
+
+except Exception as e:
+    print(f"Ocurrió un error al cargar el modelo: {e}")
+    modelo_cargado = None
+    tokenizer_cargado = None
+
+# --- 2. FUNCIÓN DE PREDICCIÓN ---
+def predecir_con_modelo_entrenado(texto):
+    if not modelo_cargado or not tokenizer_cargado:
+        return "Error: Modelo no disponible. Revisa los logs del servidor."
+
+    modelo_cargado.eval()
+    with torch.no_grad():
+        encoding = tokenizer_cargado.encode_plus(
+            texto,
+            add_special_tokens=True,
+            max_length=MAX_LEN,
+            return_token_type_ids=False,
+            padding='max_length',
+            truncation=True,
+            return_attention_mask=True,
+            return_tensors='pt',
+        )
+
+        input_ids = encoding['input_ids'].to(device)
+        attention_mask = encoding['attention_mask'].to(device)
+        outputs = modelo_cargado(input_ids=input_ids, attention_mask=attention_mask)
+        _, prediction_id = torch.max(outputs.logits, dim=1)
+
+    labels = {0: 'Control Sano (CO)', 1: 'Cáncer Colorrectal (CRC)'}
+    return labels.get(prediction_id.item(), "Categoría Desconocida")
+
+# --- 3. LA VISTA DE DJANGO ---
+def hacer_prediccion_view(request):
+    """
+    Maneja las peticiones GET y POST para la página de predicción.
+    """
+    resultado_prediccion = None
+    texto_ingresado = ""
+
+    if request.method == 'POST':
+        # Captura el texto del formulario
+        texto_ingresado = request.POST.get('texto_clinico', '')
+        if texto_ingresado:
+            # Llama a la función de predicción
+            resultado_prediccion = predecir_con_modelo_entrenado(texto_ingresado)
+
+    # Prepara el contexto para la plantilla
+    contexto = {
+        'resultado_prediccion': resultado_prediccion,
+        'texto_ingresado': texto_ingresado,
+    }
+    return render(request, 'hacer_prediccion.html', contexto)
