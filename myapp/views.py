@@ -381,3 +381,6 @@ def historia_clinica(request):
         return redirect("login")
     return render(request,'historia clinica.html')
 
+
+
+#esto es un comentario para ver si solo se permite un solo despliegue 
