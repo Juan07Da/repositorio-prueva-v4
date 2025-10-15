@@ -384,3 +384,4 @@ def historia_clinica(request):
 
 
 #esto es un comentario para ver si solo se permite un solo despliegue 
+#y este es otro
